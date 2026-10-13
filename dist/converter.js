@@ -15,8 +15,29 @@ export function convert(text, options = {}) {
  let data; try {data=JSON.parse(text);} catch {throw Error('Invalid JSON. Check commas, quotes and escaped Windows backslashes. JSON comments are not supported.');}
  if (!object(data)) throw Error('Use a JSON object at the top level.');
  let nodes=0;
- function validate(v,d=0) {if (++nodes>20000 || d>40) throw Error('Configuration is too deeply nested or too large.'); if (v && typeof v==='object') for (const [k,x] of Object.entries(v)) {if (['__proto__','prototype','constructor'].includes(k)) throw Error('Configuration contains a reserved object key.');validate(x,d+1);}}
+ function validate(v,d=0) {if (typeof v==='number' && !Number.isFinite(v)) throw Error('JSON numbers must be finite.');if (++nodes>20000 || d>40) throw Error('Configuration is too deeply nested or too large.'); if (v && typeof v==='object') for (const [k,x] of Object.entries(v)) {if (['__proto__','prototype','constructor'].includes(k)) throw Error('Configuration contains a reserved object key.');validate(x,d+1);}}
  validate(data);
+ // JSON.parse validates grammar; this bounded second pass rejects silent key overwrites.
+ const tokens=text.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/g);
+ let index=0;
+ function scan(depth=0) {
+  if (depth>40) throw Error('Configuration is too deeply nested.');
+  const token=tokens[index++];
+  if(token==='{') {
+   const seen=new Set();
+   while(tokens[index]!=='}') {
+    const key=JSON.parse(tokens[index++]);
+    if(seen.has(key)) throw Error('Duplicate JSON keys are not allowed.');
+    seen.add(key);index++;scan(depth+1);
+    if(tokens[index]===',') index++; else break;
+   }
+   index++;
+  } else if(token==='[') {
+   while(tokens[index]!==']') {scan(depth+1);if(tokens[index]===',') index++;else break;}
+   index++;
+  }
+ }
+ scan();
  const issues=[], changes=[];
  const issue=(level,path,message)=>issues.push({level,path,message});
  const change=(path,message)=>changes.push({path,message});
@@ -24,15 +45,16 @@ export function convert(text, options = {}) {
  function pathValue(v,path) {
   if (opt.source===opt.target) return v;
   let result=v;
+  const windowsPath=opt.source==='windows'?v.replace(/\//g,'\\'):v;
   if (opt.source==='windows' && /[a-z]:\\.*;[a-z]:\\/i.test(v)) {issue('review',path,'Windows path list needs individual directory mappings and a target-specific delimiter. Kept unchanged.');return v;}
-  if (opt.source==='windows' && /^(?:[a-z]:\\|\\\\|%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%)/i.test(v)) {
+  if (opt.source==='windows' && /^(?:[a-z]:\\|\\\\|%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%)/i.test(windowsPath)) {
    if (/^\\\\/.test(v)) {issue('review',path,'Network share path needs an explicit mount on the target device. Kept unchanged.');return v;}
    let suffix;
-   const match=v.match(/^[a-z]:\\Users\\[^\\]+(.*)$/i);
+   const match=windowsPath.match(/^[a-z]:\\Users\\[^\\]+(.*)$/i);
    if (match) suffix=match[1];
-   else if (/^%USERPROFILE%/i.test(v)) suffix=v.replace(/^%USERPROFILE%/i,'');
-   else if (/^%APPDATA%/i.test(v)) suffix='\\AppData\\Roaming'+v.replace(/^%APPDATA%/i,'');
-   else if (/^%LOCALAPPDATA%/i.test(v)) suffix='\\AppData\\Local'+v.replace(/^%LOCALAPPDATA%/i,'');
+   else if (/^%USERPROFILE%/i.test(v)) suffix=windowsPath.replace(/^%USERPROFILE%/i,'');
+   else if (/^%APPDATA%/i.test(v)) suffix='\\AppData\\Roaming'+windowsPath.replace(/^%APPDATA%/i,'');
+   else if (/^%LOCALAPPDATA%/i.test(v)) suffix='\\AppData\\Local'+windowsPath.replace(/^%LOCALAPPDATA%/i,'');
    else {issue('review',path,'Drive-specific path has no known target mapping. Kept unchanged.');return v;}
    if (opt.target!=='windows') {
     suffix=suffix.replace(/\\/g,'/');
@@ -40,14 +62,15 @@ export function convert(text, options = {}) {
     result=home+suffix;
    }
   } else if (opt.source!=='windows' && /^(?:\/Users\/[^/]+|\/home\/[^/]+)(?:\/|$)/.test(v)) {
-   let suffix=v.replace(/^\/(?:Users|home)\/[^/]+/,'');
+   let suffix=windowsPath.replace(/^\/(?:Users|home)\/[^/]+/,'');
    if (opt.target==='windows') {
-    if (suffix.startsWith('/Library/Application Support')) {suffix=suffix.replace('/Library/Application Support','/AppData/Roaming');issue('review',path,'App data location is an estimate. Confirm the app’s target directory.');}
-    else if (suffix.startsWith('/.config')) {suffix=suffix.replace('/.config','/AppData/Roaming');issue('review',path,'App data location is an estimate. Confirm the app’s target directory.');}
+    if (/[<>:"|?*]/.test(suffix) || suffix.split('/').some(segment=>/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(segment) || /[. ]$/.test(segment))) issue('review',path,'Path contains names or characters restricted on Windows. Rename them on the target device.');
+    if (/^\/Library\/Application Support(?:\/|$)/.test(suffix)) {suffix=suffix.replace('/Library/Application Support','/AppData/Roaming');issue('review',path,'App data location is an estimate. Confirm the app’s target directory.');}
+    else if (/^\/\.config(?:\/|$)/.test(suffix)) {suffix=suffix.replace('/.config','/AppData/Roaming');issue('review',path,'App data location is an estimate. Confirm the app’s target directory.');}
     result=home+suffix.replace(/\//g,'\\');
    } else {
-    if (opt.source==='macos' && suffix.startsWith('/Library/Application Support')) {suffix=suffix.replace('/Library/Application Support','/.config');issue('review',path,'Confirm the app’s Linux configuration directory.');}
-    if (opt.source==='linux' && suffix.startsWith('/.config')) {suffix=suffix.replace('/.config','/Library/Application Support');issue('review',path,'Confirm the app’s macOS configuration directory.');}
+    if (opt.source==='macos' && /^\/Library\/Application Support(?:\/|$)/.test(suffix)) {suffix=suffix.replace('/Library/Application Support','/.config');issue('review',path,'Confirm the app’s Linux configuration directory.');}
+    if (opt.source==='linux' && /^\/\.config(?:\/|$)/.test(suffix)) {suffix=suffix.replace('/.config','/Library/Application Support');issue('review',path,'Confirm the app’s macOS configuration directory.');}
     result=home+suffix;
    }
   } else if (/^~[\\/]|^\$(?:HOME|\{HOME\})|%[A-Z_]+%/.test(v)) issue('review',path,'Variable or tilde expansion depends on the host app. Kept unchanged.');
@@ -56,13 +79,13 @@ export function convert(text, options = {}) {
   return result;
  }
  function walk(v,path='',key='') {
-  if ((sensitive(key)||credentialValue(v)) && v!==null && v!=='' && !reference(v)) {
+  if (((sensitive(key) && typeof v!=='boolean')||credentialValue(v)) && v!==null && v!=='' && !reference(v)) {
    if(opt.redact) {change(path,'Redacted a likely credential.');issue('review',path,'Replace the redacted credential locally before using this configuration.');return 'REPLACE_LOCALLY';}
    issue('review',path,'A likely credential is included in the output. Keep the exported file private.');return v;
   }
   if(typeof v==='string') {if (/^https?:\/\//i.test(v)) {if(/^http:\/\//i.test(v) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?=[:/]|$)/i.test(v)) issue('review',path,'Unencrypted remote endpoint. Verify its trust and transport.');return v;} return pathValue(v,path);}
   if (Array.isArray(v)) return v.map((x,i)=>walk(x,`${path}[${i}]`,key));
-  if(object(v)) return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,walk(x,path?`${path}.${k}`:k,k)]));
+  if(object(v)) return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,walk(x,path?`${path}.${k}`:k,opt.mode==='mcp' && path===rootKey?'':k)]));
   return v;
  }
  let rootKey;
@@ -76,6 +99,10 @@ export function convert(text, options = {}) {
   for(const [name,s] of entries) {
    if(!object(s)) throw Error(`Server ${name} must be an object.`);
    if (typeof s.command!=='string' && typeof s.url!=='string') throw Error(`Server ${name} needs a command or URL.`);
+   if(s.command!==undefined && s.url!==undefined) throw Error(`Server ${name} must choose command or URL, not both.`);
+   for(const field of ['cwd','envFile','type']) if(s[field]!==undefined && typeof s[field]!=='string') throw Error(`Server ${name} ${field} must be a string.`);
+   if(s.headers!==undefined && (!object(s.headers)||Object.values(s.headers).some(v=>typeof v!=='string'))) throw Error(`Server ${name} headers must contain strings.`);
+   if((s.type==='stdio' && s.url!==undefined) || (['http','sse'].includes(s.type) && s.command!==undefined)) throw Error(`Server ${name} transport type conflicts with its command or URL.`);
    if(s.command!==undefined && (typeof s.command!=='string'||!s.command.trim())) throw Error(`Server ${name} has an invalid command.`);
    if(s.args!==undefined && (!Array.isArray(s.args)||s.args.some(a=>typeof a!=='string'))) throw Error(`Server ${name} args must be an array of strings.`);
    if(s.env!==undefined && (!object(s.env)||Object.values(s.env).some(v=>v!==null && !['string','number'].includes(typeof v)))) throw Error(`Server ${name} env must contain strings, numbers or null.`);
@@ -86,12 +113,13 @@ export function convert(text, options = {}) {
  if(opt.mode==='mcp') {
   for(const [name,s] of Object.entries(out[rootKey])) {
    const p=`${rootKey}.${name}`;
+   if(s.type && !['stdio','http','sse'].includes(s.type)) issue('review',p+'.type','Unknown transport type preserved. Check destination client support.');
    if(s.command) {
     const raw=data[rootKey][name];
     const base=raw.command.split(/[\\/]/).pop().toLowerCase();
     if(opt.source==='windows' && opt.target!=='windows' && /^(cmd|cmd\.exe)$/.test(base)) {
      const a=raw.args||[];
-     if(a[0]?.toLowerCase()==='/c' && a.length>=2 && /^(npx|npx\.cmd|node|node\.exe|uvx|uvx\.exe|python|python\.exe|python3)$/.test(a[1]) && !a.slice(2).some(v=>/[&|<>\r\n]/.test(v))) {
+     if(a[0]?.toLowerCase()==='/c' && a.length>=2 && /^(npx|npx\.cmd|node|node\.exe|uvx|uvx\.exe|python|python\.exe|python3)$/.test(a[1]) && !a.slice(2).some(v=>/[&|<>\r\n^%!"()]/.test(v))) {
       s.command=a[1].replace(/\.(cmd|exe)$/,'').replace(/^python$/,'python3');s.args=s.args.slice(2);change(`${p}.command`,'Removed the Windows cmd wrapper; kept arguments separate.');
      } else issue('review',`${p}.command`,'Complex Windows shell command cannot be converted safely. Kept unchanged.');
     } else if(opt.source==='windows' && opt.target!=='windows' && /^(npx\.cmd|node\.exe|uvx\.exe|python(?:3)?\.exe|python)$/.test(base) && !/[\\/]/.test(raw.command)) {

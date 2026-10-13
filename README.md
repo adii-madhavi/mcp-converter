@@ -7,7 +7,7 @@ Browser-local Windows ↔ macOS ↔ Linux configuration migration. No runtime de
 Requires Node 20+ for tests and Python 3 for the local server.
 
 ```sh
-npm test
+npm run check
 npm start
 ```
 
@@ -47,3 +47,7 @@ Checked on 2026-10-13:
 - https://code.visualstudio.com/docs/agents/reference/mcp-configuration
 
 Client formats evolve. Verify the destination application's documentation before importing; especially remote transport types, interactive inputs and sandbox settings.
+
+## Continuous integration
+
+GitHub Actions runs syntax checks and the Node regression suite on push and pull requests. No dependency installation or secrets are needed. Duplicate JSON keys and nonfinite numbers are rejected.

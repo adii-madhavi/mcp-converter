@@ -69,13 +69,13 @@ Protect pasted credentials and paths against accidental uploads, stored state, D
 
 ## Product limits
 
-No TOML/YAML/INI parsing, binary conversion, executable replacement, package installation, filesystem existence checks, permissions migration, registry migration, MCP connection probing or automatic installation into a destination app. Strict JSON only: comments are rejected. Duplicate JSON keys use the platform parser's last-key behavior; avoid duplicate keys. AppData and Linux XDG defaults are estimates. Cross-host schema conversion preserves fields that may be unsupported; review them manually.
+No TOML/YAML/INI parsing, binary conversion, executable replacement, package installation, filesystem existence checks, permissions migration, registry migration, MCP connection probing or automatic installation into a destination app. Strict JSON only: comments are rejected. Duplicate JSON keys, including escaped equivalents, are rejected. Nonfinite numeric values are rejected. AppData and Linux XDG defaults are estimates. Cross-host schema conversion preserves fields that may be unsupported; review them manually.
 
 ## Roadmap
 
 1. Introduce versioned, fixture-tested adapter registry for each supported app and client version.
 2. Add explicit user-defined root mappings for other drives/mounts; never infer them.
-3. Add a robust duplicate-key-aware JSON/JSONC parser and source-position diagnostics.
+3. Add opt-in JSONC parsing and source-position diagnostics. Strict JSON duplicate-key detection is implemented.
 4. Add host-specific secret references with opt-in prompts; preserve the rule that credentials stay local.
 5. Add audited TOML/YAML/INI parsers under strict resource budgets and adapters for app settings.
 6. Add reviewed offline desktop packaging only if filesystem integration is needed; require per-file permission and backup/rollback.

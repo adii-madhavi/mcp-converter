@@ -6,7 +6,7 @@ The configuration pipeline operates entirely in the browser. The static host rec
 | --- | --- | --- |
 | API keys accidentally exposed | Default heuristic redaction; no source values in reports | Unrecognized secrets, source editor visibility, extensions |
 | DOM injection | textContent/value rendering; external module scripts; CSP | Host compromise or malicious delivered script |
-| Prototype pollution | Reserved-key rejection, own-property checks, no untrusted merges | Future adapters need the same constraints |
+| Prototype pollution | Reserved-key and duplicate-key rejection, own-property checks, no untrusted merges | Future adapters need the same constraints |
 | Resource exhaustion | 256 KB payload, depth/node/server budgets | Brief main-thread parsing time |
 | Shell injection | No execution; only conservative token-level rewrite | User may later run unsafe exported commands |
 | Incorrect migration | Preserve unknown values, warnings, acknowledgment | Target paths, binaries and schemas remain unverified |
